@@ -4,8 +4,6 @@ from PIL import Image
 import math
 from bitarray import bitarray
 
-MIN_SIZE = 64
-
 
 def str2bit_array(s):
     ret = bitarray(''.join([bin(int('1' + hex(c)[2:], 16))[3:] for c in s.encode('utf-8')]))
@@ -16,19 +14,13 @@ def bit_array2str(bit):
     return bit.tobytes().decode('utf-8')
 
 
-def img_preprocess(img):
-    width, height = img.size
-
-    size = MIN_SIZE * round(width * height / 200 / (MIN_SIZE ** 2))
-    if size == 0:
-        size = MIN_SIZE
-    # img_grey = np.array(img.convert('L'))
-    rgb_img = img.split()
-    img_grey = np.array(rgb_img[0])
-    x = math.ceil(img_grey.shape[0] / size) * size
-    y = math.ceil(img_grey.shape[1] / size) * size
+def img_preprocess(origin_img):
+    img = np.array(origin_img)
+    size = 8
+    x = math.ceil(img.shape[0] / size) * size
+    y = math.ceil(img.shape[1] / size) * size
     out_img = np.zeros((x, y), dtype=np.int)
-    out_img[0:img_grey.shape[0], 0:img_grey.shape[1]] = img_grey[0:img_grey.shape[0], 0:img_grey.shape[1]]
+    out_img[0:img.shape[0], 0:img.shape[1]] = img[0:img.shape[0], 0:img.shape[1]]
     return out_img, size
 
 
@@ -43,80 +35,94 @@ def img_cut(img, size):
 
 
 def get_key(size):
-    byte_sequence = (np.random.permutation(size)).tolist()
+    byte_sequence = list((np.random.permutation(size)))
     return byte_sequence
+
+
+def get_permutation_key(short_key, size):
+    box = list(range(size))
+    swap_index = 0
+    for index in range(size):
+        temp = box[index]
+        swap_index = (swap_index + box[index] + short_key[index % len(short_key)]) % size
+        box[index] = box[swap_index]
+        box[swap_index] = temp
+    return box
 
 
 def img_combine(block_list, size, x, y):
     img_x = size * x
     img_y = size * y
-    out_img = np.zeros((img_x, img_y),dtype=np.int)
+    out_img = np.zeros((img_x, img_y), dtype=np.int)
     for index_x in range(x):
         for index_y in range(y):
             out_img[index_x * size:(index_x + 1) * size, index_y * size:(index_y + 1) * size] = block_list[index_x * y + index_y]
     return out_img
 
 
-def img_permutation(block_list, byte_sequence):
+def img_permutation(block_list, key):
     result = []
-    for index in range(len(byte_sequence)):
-        result.append(block_list[byte_sequence.index(index)])
+    permutation_key = get_permutation_key(key, len(block_list))
+    for index in range(len(permutation_key)):
+        result.append(block_list[permutation_key.index(index)])
     return result
 
 
-def img_recover(block_list, byte_sequence):
+def img_recover(block_list, key):
     result = []
-    for index in range(len(byte_sequence)):
-        result.append(block_list[byte_sequence[index]])
+    permutation_key = get_permutation_key(key, len(block_list))
+    for index in range(len(permutation_key)):
+        result.append(block_list[permutation_key[index]])
     return result
 
 
-def stream_encryption(block_list, byte_sequence):
-    img_key = stream_key(byte_sequence, len(block_list), 256)
+def stream_encryption(block_list, key):
+    img_key = stream_key(key, len(block_list))
+    x = block_list[0].shape[0]
+    y = block_list[0].shape[1]
     for index in range(len(block_list)):
-        x = block_list[index].shape[0]
-        y = block_list[index].shape[1]
         for index_x in range(x):
             for index_y in range(y):
                 block_list[index][index_x, index_y] ^= img_key[index]
-    return block_list
 
 
-def stream_key(short_key, num, range_size):
-    box = list(range(range_size))
+def stream_key(short_key, num):
+    box = list(range(256))
     swap_index = 0
-    for index in range(range_size):
+    for index in range(256):
         temp = box[index]
-        swap_index = (swap_index + box[index] + short_key[index % len(short_key)]) % range_size
+        swap_index = (swap_index + box[index] + short_key[index % len(short_key)]) % 256
         box[index] = box[swap_index]
         box[swap_index] = temp
 
     index_1 = index_2 = 0
     out_key = []
     for index in range(num):
-        index_1 = (index_1 + 1) % range_size
-        index_2 = (index_2 + box[index_1]) % range_size
+        index_1 = (index_1 + 1) % 256
+        index_2 = (index_2 + box[index_1]) % 256
         temp = box[index_1]
         box[index_1] = box[index_2]
         box[index_2] = temp
-        out_key.append(box[(box[index_1] + box[index_2]) % range_size])
+        out_key.append(box[(box[index_1] + box[index_2]) % 256])
     return out_key
 
 
-def histogram_shifting(block_list, embed_bits, byte_sequence):
-    out_key = stream_key(byte_sequence, len(byte_sequence) * len(block_list), 256)
+def histogram_shifting(block_list, embed_bits, key):
+    out_key = stream_key(key, len(key) * len(block_list))
     h = []
     for index in range(len(block_list)):
         h.extend(pixel_position(block_list[index]))
+    embed_bits.append(1)
     h.extend(embed_bits)
-    print(len(h))
     for index in range(len(block_list)):
         x = block_list[index].shape[0]
         y = block_list[index].shape[1]
-        sub_key = out_key[index * len(byte_sequence): (index + 1) * len(byte_sequence)]
-        img_key = stream_key(sub_key, x * y, x * y)
+        sub_key = out_key[index * len(key): (index + 1) * len(key)]
+        img_key = get_permutation_key(sub_key, x * y)
         data_embed(block_list[index], img_key, h)
-    print(len(h))
+    if len(h) == 0:
+        return True
+    return False
 
 
 def pixel_position(block):
@@ -169,17 +175,19 @@ def data_embed(block, key, hidden_data):
                         block[index_x, index_y] += 1
 
 
-def data_recover(block_list, byte_sequence):
-    out_key = stream_key(byte_sequence, len(byte_sequence) * len(block_list), 256)
+def data_recover(block_list, key):
+    out_key = stream_key(key, len(key) * len(block_list))
     h = []
+    x = block_list[0].shape[0]
+    y = block_list[0].shape[1]
     for index in range(len(block_list)):
-        x = block_list[index].shape[0]
-        y = block_list[index].shape[1]
-        sub_key = out_key[index * len(byte_sequence): (index + 1) * len(byte_sequence)]
-        img_key = stream_key(sub_key, x * y, x * y)
+        sub_key = out_key[index * len(key): (index + 1) * len(key)]
+        img_key = get_permutation_key(sub_key, x * y)
         h.extend(bits_recover(block_list[index], img_key))
     for index in range(len(block_list)):
         pixel_position_recover(block_list[index], h)
+    while h.pop() != 1:
+        pass
     return h
 
 
@@ -235,27 +243,47 @@ def pixel_position_recover(block, h):
 def main():
     img_addr = input()
     origin_img = Image.open(img_addr)
-    img, block_size = img_preprocess(origin_img)
     plt.figure("Image")
-    plt.imshow(img, 'Greys')
+    plt.imshow(origin_img)
     plt.show()
-    block_list, x_num, y_num = img_cut(img, block_size)
+    rgb_img = origin_img.split()
+    img_r, block_size = img_preprocess(rgb_img[0])
+    img_g = img_preprocess(rgb_img[1])[0]
+    img_b = img_preprocess(rgb_img[2])[0]
+    block_list_r, x_num, y_num = img_cut(img_r, block_size)
+    block_list_g = img_cut(img_g, block_size)[0]
+    block_list_b = img_cut(img_b, block_size)[0]
 
-    key = get_key(len(block_list))
-    encrypted_block_list = stream_encryption(img_permutation(block_list, key), key)
-    embed_key = get_key(len(block_list))
+    key = get_key(256)
+    block_list_r = img_permutation(block_list_r, key)
+    stream_encryption(block_list_r, key)
+    block_list_g = img_permutation(block_list_g, key)
+    stream_encryption(block_list_g, key)
+    block_list_b = img_permutation(block_list_b, key)
+    stream_encryption(block_list_b, key)
+    embed_key = get_key(256)
     embed_bits = str2bit_array("plane-walker").tolist()
-    embed_bits.append(1)
-    histogram_shifting(block_list, embed_bits, embed_key)
-    recover_data = data_recover(block_list, embed_key)
-    while recover_data.pop() != 1:
-        pass
-    print(bit_array2str(bitarray(recover_data)))
-    encrypted_block_list = img_recover(stream_encryption(encrypted_block_list, key), key)
-    img = img_combine(encrypted_block_list, block_size, x_num, y_num)
+    if not histogram_shifting(block_list_r, embed_bits, embed_key):
+        print("space run out.")
+        return
 
+    recover_data = data_recover(block_list_r, embed_key)
+    print(bit_array2str(bitarray(recover_data)))
+
+    stream_encryption(block_list_r, key)
+    stream_encryption(block_list_g, key)
+    stream_encryption(block_list_b, key)
+
+    block_list_r = img_recover(block_list_r, key)
+    block_list_g = img_recover(block_list_g, key)
+    block_list_b = img_recover(block_list_b, key)
+
+    img_r = Image.fromarray(np.uint8(img_combine(block_list_r, block_size, x_num, y_num)))
+    img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
+    img_b = Image.fromarray(np.uint8(img_combine(block_list_b, block_size, x_num, y_num)))
+    final_img = Image.merge('RGB', (img_r, img_g, img_b))
     plt.figure("Image")
-    plt.imshow(img, 'Greys')
+    plt.imshow(final_img)
     plt.show()
 
 
