@@ -5,6 +5,18 @@ import math
 from bitarray import bitarray
 
 
+def list_key2string(key):
+    return "".join(['{:02x}'.format(i) for i in key])
+
+
+def string2list_key(key):
+    tmp = []
+    for index in range(len(key)):
+        if index % 2 == 1:
+            tmp.append(key[index - 1] + key[index])
+    return [int(i, 16) for i in tmp]
+
+
 def str2bit_array(s):
     ret = bitarray(''.join([bin(int('1' + hex(c)[2:], 16))[3:] for c in s.encode('utf-8')]))
     return ret
@@ -19,6 +31,7 @@ def img_preprocess(origin_img):
     size = 8
     x = math.ceil(img.shape[0] / size) * size
     y = math.ceil(img.shape[1] / size) * size
+    print("total bits length: ", x * y)
     out_img = np.zeros((x, y), dtype=np.int)
     out_img[0:img.shape[0], 0:img.shape[1]] = img[0:img.shape[0], 0:img.shape[1]]
     return out_img, size
@@ -113,10 +126,11 @@ def histogram_shifting(block_list, embed_bits, key):
     for index in range(len(block_list)):
         h.extend(pixel_position(block_list[index]))
     embed_bits.append(1)
+    print("length of Map: ", len(h))
     h.extend(embed_bits)
+    x = block_list[0].shape[0]
+    y = block_list[0].shape[1]
     for index in range(len(block_list)):
-        x = block_list[index].shape[0]
-        y = block_list[index].shape[1]
         sub_key = out_key[index * len(key): (index + 1) * len(key)]
         img_key = get_permutation_key(sub_key, x * y)
         data_embed(block_list[index], img_key, h)
@@ -186,6 +200,7 @@ def data_recover(block_list, key):
         h.extend(bits_recover(block_list[index], img_key))
     for index in range(len(block_list)):
         pixel_position_recover(block_list[index], h)
+    print("max hidden bits length: ", len(h))
     while h.pop() != 1:
         pass
     return h
@@ -247,6 +262,7 @@ def main():
     plt.imshow(origin_img)
     plt.show()
     rgb_img = origin_img.split()
+
     img_r, block_size = img_preprocess(rgb_img[0])
     img_g = img_preprocess(rgb_img[1])[0]
     img_b = img_preprocess(rgb_img[2])[0]
@@ -254,18 +270,40 @@ def main():
     block_list_g = img_cut(img_g, block_size)[0]
     block_list_b = img_cut(img_b, block_size)[0]
 
-    key = get_key(256)
+    key = get_key(128)
     block_list_r = img_permutation(block_list_r, key)
     stream_encryption(block_list_r, key)
     block_list_g = img_permutation(block_list_g, key)
     stream_encryption(block_list_g, key)
     block_list_b = img_permutation(block_list_b, key)
     stream_encryption(block_list_b, key)
-    embed_key = get_key(256)
+    embed_key = get_key(128)
     embed_bits = str2bit_array("plane-walker").tolist()
     if not histogram_shifting(block_list_r, embed_bits, embed_key):
         print("space run out.")
         return
+
+    img_r = Image.fromarray(np.uint8(img_combine(block_list_r, block_size, x_num, y_num)))
+    img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
+    img_b = Image.fromarray(np.uint8(img_combine(block_list_b, block_size, x_num, y_num)))
+    rgb_img = Image.merge('RGB', (img_r, img_g, img_b))
+    plt.figure("Image")
+    plt.imshow(rgb_img)
+    plt.show()
+    string_key = list_key2string(key)
+    string_embed_key = list_key2string(embed_key)
+    print("encryption key: " + string_key)
+    print("embed key: " + string_embed_key)
+
+    rgb_img = rgb_img.split()
+    img_r, block_size = img_preprocess(rgb_img[0])
+    img_g = img_preprocess(rgb_img[1])[0]
+    img_b = img_preprocess(rgb_img[2])[0]
+    block_list_r, x_num, y_num = img_cut(img_r, block_size)
+    block_list_g = img_cut(img_g, block_size)[0]
+    block_list_b = img_cut(img_b, block_size)[0]
+    key = string2list_key(string_key)
+    embed_key = string2list_key(string_embed_key)
 
     recover_data = data_recover(block_list_r, embed_key)
     print(bit_array2str(bitarray(recover_data)))
