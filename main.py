@@ -273,10 +273,16 @@ def main():
     key = get_key(128)
     block_list_r = img_permutation(block_list_r, key)
     stream_encryption(block_list_r, key)
+    key.append(2)
     block_list_g = img_permutation(block_list_g, key)
+    key.pop()
+    key.append(1)
     stream_encryption(block_list_g, key)
     block_list_b = img_permutation(block_list_b, key)
+    key.pop()
+    key.append(2)
     stream_encryption(block_list_b, key)
+    key.pop()
     embed_key = get_key(128)
     embed_bits = str2bit_array("plane-walker").tolist()
     if not histogram_shifting(block_list_r, embed_bits, embed_key):
@@ -296,6 +302,36 @@ def main():
     print("embed key: " + string_embed_key)
 
     rgb_img = rgb_img.split()
+
+    img_r, block_size = img_preprocess(rgb_img[0])
+    img_g = img_preprocess(rgb_img[1])[0]
+    img_b = img_preprocess(rgb_img[2])[0]
+    block_list_r, x_num, y_num = img_cut(img_r, block_size)
+    block_list_g = img_cut(img_g, block_size)[0]
+    block_list_b = img_cut(img_b, block_size)[0]
+    key = string2list_key(string_key)
+
+    stream_encryption(block_list_r, key)
+    block_list_r = img_recover(block_list_r, key)
+    key.append(1)
+    stream_encryption(block_list_g, key)
+    key.pop()
+    key.append(2)
+    block_list_g = img_recover(block_list_g, key)
+    stream_encryption(block_list_b, key)
+    key.pop()
+    key.append(1)
+    block_list_b = img_recover(block_list_b, key)
+    key.pop()
+
+    img_r = Image.fromarray(np.uint8(img_combine(block_list_r, block_size, x_num, y_num)))
+    img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
+    img_b = Image.fromarray(np.uint8(img_combine(block_list_b, block_size, x_num, y_num)))
+    final_img = Image.merge('RGB', (img_r, img_g, img_b))
+    plt.figure("Image")
+    plt.imshow(final_img)
+    plt.show()
+
     img_r, block_size = img_preprocess(rgb_img[0])
     img_g = img_preprocess(rgb_img[1])[0]
     img_b = img_preprocess(rgb_img[2])[0]
@@ -309,12 +345,17 @@ def main():
     print(bit_array2str(bitarray(recover_data)))
 
     stream_encryption(block_list_r, key)
-    stream_encryption(block_list_g, key)
-    stream_encryption(block_list_b, key)
-
     block_list_r = img_recover(block_list_r, key)
+    key.append(1)
+    stream_encryption(block_list_g, key)
+    key.pop()
+    key.append(2)
     block_list_g = img_recover(block_list_g, key)
+    stream_encryption(block_list_b, key)
+    key.pop()
+    key.append(1)
     block_list_b = img_recover(block_list_b, key)
+    key.pop()
 
     img_r = Image.fromarray(np.uint8(img_combine(block_list_r, block_size, x_num, y_num)))
     img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
