@@ -5,6 +5,31 @@ import math
 from bitarray import bitarray
 
 
+def PSNR(img1, img2):
+    im = np.array(img1, 'f')
+    im2 = np.array(img2, 'f')
+    height = im.shape[0]
+    width = im.shape[1]
+    R = im[:, :, 0] - im2[:, :, 0]
+    G = im[:, :, 1] - im2[:, :, 1]
+    B = im[:, :, 2] - im2[:, :, 2]
+    mser = R * R
+    mseg = G * G
+    mseb = B * B
+    SUM = mser.sum() + mseg.sum() + mseb.sum()
+    MSE = SUM / (height * width * 3)
+    PSNR = 10 * math.log((255.0 * 255.0 / (MSE)), 10)
+    return PSNR
+
+
+class TestInfo:
+    total_size = 0
+    map_size = 0
+    total_embed_bits = 0
+    origin_img = None
+    direct_img = None
+
+
 def list_key2string(key):
     return "".join(['{:02x}'.format(i) for i in key])
 
@@ -26,15 +51,14 @@ def bit_array2str(bit):
     return bit.tobytes().decode('utf-8')
 
 
-def img_preprocess(origin_img):
+def img_preprocess(origin_img, size):
     img = np.array(origin_img)
-    size = 8
     x = math.ceil(img.shape[0] / size) * size
     y = math.ceil(img.shape[1] / size) * size
-    print("total bits length: ", x * y)
+    TestInfo.total_size = x * y
     out_img = np.zeros((x, y), dtype=np.int)
     out_img[0:img.shape[0], 0:img.shape[1]] = img[0:img.shape[0], 0:img.shape[1]]
-    return out_img, size
+    return out_img
 
 
 def img_cut(img, size):
@@ -126,7 +150,7 @@ def histogram_shifting(block_list, embed_bits, key):
     for index in range(len(block_list)):
         h.extend(pixel_position(block_list[index]))
     embed_bits.append(1)
-    print("length of Map: ", len(h))
+    TestInfo.map_size = len(h)
     h.extend(embed_bits)
     x = block_list[0].shape[0]
     y = block_list[0].shape[1]
@@ -200,7 +224,7 @@ def data_recover(block_list, key):
         h.extend(bits_recover(block_list[index], img_key))
     for index in range(len(block_list)):
         pixel_position_recover(block_list[index], h)
-    print("max hidden bits length: ", len(h))
+    TestInfo.total_embed_bits = len(h)
     while h.pop() != 1:
         pass
     return h
@@ -255,17 +279,18 @@ def pixel_position_recover(block, h):
                     block[index_x, index_y] = 255
 
 
-def main():
-    img_addr = input()
-    origin_img = Image.open(img_addr)
-    plt.figure("Image")
-    plt.imshow(origin_img)
-    plt.show()
+def hidden_image(origin_img, set_size):
     rgb_img = origin_img.split()
+    block_size = set_size
 
-    img_r, block_size = img_preprocess(rgb_img[0])
-    img_g = img_preprocess(rgb_img[1])[0]
-    img_b = img_preprocess(rgb_img[2])[0]
+    img_r = img_preprocess(rgb_img[0], block_size)
+    img_g = img_preprocess(rgb_img[1], block_size)
+    img_b = img_preprocess(rgb_img[2], block_size)
+    rgb_img = Image.merge('RGB', (Image.fromarray(np.uint8(img_r)), Image.fromarray(np.uint8(img_g)), Image.fromarray(np.uint8(img_b))))
+    TestInfo.origin_img = rgb_img
+    plt.figure("Image")
+    plt.imshow(rgb_img)
+    plt.show()
     block_list_r, x_num, y_num = img_cut(img_r, block_size)
     block_list_g = img_cut(img_g, block_size)[0]
     block_list_b = img_cut(img_b, block_size)[0]
@@ -287,7 +312,7 @@ def main():
     embed_bits = str2bit_array("plane-walker").tolist()
     if not histogram_shifting(block_list_r, embed_bits, embed_key):
         print("space run out.")
-        return
+        return -1
 
     img_r = Image.fromarray(np.uint8(img_combine(block_list_r, block_size, x_num, y_num)))
     img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
@@ -300,12 +325,16 @@ def main():
     string_embed_key = list_key2string(embed_key)
     print("encryption key: " + string_key)
     print("embed key: " + string_embed_key)
+    return rgb_img, string_key, string_embed_key
 
-    rgb_img = rgb_img.split()
 
-    img_r, block_size = img_preprocess(rgb_img[0])
-    img_g = img_preprocess(rgb_img[1])[0]
-    img_b = img_preprocess(rgb_img[2])[0]
+def recover_image(origin_img, string_key, string_embed_key, set_size):
+    block_size = set_size
+    rgb_img = origin_img.split()
+
+    img_r = img_preprocess(rgb_img[0], block_size)
+    img_g = img_preprocess(rgb_img[1], block_size)
+    img_b = img_preprocess(rgb_img[2], block_size)
     block_list_r, x_num, y_num = img_cut(img_r, block_size)
     block_list_g = img_cut(img_g, block_size)[0]
     block_list_b = img_cut(img_b, block_size)[0]
@@ -328,13 +357,14 @@ def main():
     img_g = Image.fromarray(np.uint8(img_combine(block_list_g, block_size, x_num, y_num)))
     img_b = Image.fromarray(np.uint8(img_combine(block_list_b, block_size, x_num, y_num)))
     final_img = Image.merge('RGB', (img_r, img_g, img_b))
+    TestInfo.direct_img = final_img
     plt.figure("Image")
     plt.imshow(final_img)
     plt.show()
 
-    img_r, block_size = img_preprocess(rgb_img[0])
-    img_g = img_preprocess(rgb_img[1])[0]
-    img_b = img_preprocess(rgb_img[2])[0]
+    img_r = img_preprocess(rgb_img[0], block_size)
+    img_g = img_preprocess(rgb_img[1], block_size)
+    img_b = img_preprocess(rgb_img[2], block_size)
     block_list_r, x_num, y_num = img_cut(img_r, block_size)
     block_list_g = img_cut(img_g, block_size)[0]
     block_list_b = img_cut(img_b, block_size)[0]
@@ -342,7 +372,7 @@ def main():
     embed_key = string2list_key(string_embed_key)
 
     recover_data = data_recover(block_list_r, embed_key)
-    print(bit_array2str(bitarray(recover_data)))
+    print("recover data: ", bit_array2str(bitarray(recover_data)))
 
     stream_encryption(block_list_r, key)
     block_list_r = img_recover(block_list_r, key)
@@ -366,5 +396,50 @@ def main():
     plt.show()
 
 
+def main():
+    img_addr = input()
+    origin_img = Image.open(img_addr)
+    image, key, embed_key = hidden_image(origin_img)
+    recover_image(image, key, embed_key)
+
+
+def test():
+    size = []
+    for index in range(3, 16):
+        for i in range(3):
+            size.append(index)
+    ec = []
+    psnr = []
+    img_addr = input()
+    for i in size:
+        origin_img = Image.open(img_addr)
+        image, key, embed_key = hidden_image(origin_img, i)
+        recover_image(image, key, embed_key, i)
+        ec.append((TestInfo.total_embed_bits - TestInfo.map_size) / TestInfo.total_size)
+        psnr.append(PSNR(TestInfo.origin_img, TestInfo.direct_img))
+    size = np.array(size)
+    ec = np.array(ec)
+    psnr = np.array(psnr)
+    f1 = np.polyfit(size, ec, 3)
+    p1 = np.poly1d(f1)
+    val1 = p1(size)
+    f2 = np.polyfit(size, psnr, 3)
+    p2 = np.poly1d(f2)
+    val2 = p2(size)
+    plt.scatter(size, ec, color='red')
+    plt.plot(size, val1, label='EC', color='red')
+    plt.legend(loc=3)
+
+    plt.twinx()
+    plt.scatter(size, psnr, color='blue')
+    plt.plot(size, val2, label='PSNR', color='blue')
+    plt.legend(loc='upper right')
+    plt.show()
+    print(ec)
+    print(psnr)
+
+
 if __name__ == '__main__':
-    main()
+    test()
+    # main()
+
